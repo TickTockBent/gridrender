@@ -28,22 +28,26 @@ export interface GridSnapshot {
   cursorCol: number;
   cursorVisible: boolean;
   globalVersion: number;
+  decorations: BoxDecoration[];
+  decorationVersion: number;
+}
+
+export type BoxStyle = "single" | "double";
+
+export interface BoxDecoration {
+  id: number;
+  r1: number;
+  c1: number;
+  r2: number;
+  c2: number;
+  style: BoxStyle;
+  fg: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const DEFAULT_FG = 'white';
 const DEFAULT_BG = 'bg';
-
-const BOX_SINGLE = {
-  tl: '┌', tr: '┐', bl: '└', br: '┘',
-  h: '─', v: '│',
-};
-
-const BOX_DOUBLE = {
-  tl: '╔', tr: '╗', bl: '╚', br: '╝',
-  h: '═', v: '║',
-};
 
 // ─── Buffer ──────────────────────────────────────────────────────────────────
 
@@ -62,6 +66,12 @@ export class AsciiGridBuffer {
   private cursorRow = 0;
   private cursorCol = 0;
   private cursorVisible = true;
+
+  private decorations: BoxDecoration[] = [];
+  private decorationVersion = 0;
+  private nextDecorationId = 0;
+  private lastSnapshotDecorations: BoxDecoration[] | null = null;
+  private lastSnapshotDecorationVersion = -1;
 
   constructor(width: number, height: number) {
     this.width = width;
@@ -115,30 +125,44 @@ export class AsciiGridBuffer {
     }
   }
 
-  drawBox(r1: number, c1: number, r2: number, c2: number, style: 'single' | 'double' = 'single', attrs?: CellAttrs): void {
-    const box = style === 'double' ? BOX_DOUBLE : BOX_SINGLE;
-    const minR = Math.min(r1, r2);
-    const maxR = Math.max(r1, r2);
-    const minC = Math.min(c1, c2);
-    const maxC = Math.max(c1, c2);
+  drawBox(r1: number, c1: number, r2: number, c2: number, style: BoxStyle = 'single', attrs?: CellAttrs): void {
+    const rMin = Math.max(0, Math.min(r1, r2));
+    const rMax = Math.min(this.height - 1, Math.max(r1, r2));
+    const cMin = Math.max(0, Math.min(c1, c2));
+    const cMax = Math.min(this.width - 1, Math.max(c1, c2));
 
-    // corners
-    this.putChar(minR, minC, box.tl, attrs);
-    this.putChar(minR, maxC, box.tr, attrs);
-    this.putChar(maxR, minC, box.bl, attrs);
-    this.putChar(maxR, maxC, box.br, attrs);
+    // Write spaces to all border cell positions to reserve space
+    for (let c = cMin; c <= cMax; c++) {
+      if (rMin >= 0 && rMin < this.height && c >= 0 && c < this.width) {
+        this.rows[rMin].cells[c] = makeCell();
+      }
+      if (rMax >= 0 && rMax < this.height && c >= 0 && c < this.width) {
+        this.rows[rMax].cells[c] = makeCell();
+      }
+    }
+    this.bumpRow(rMin);
+    if (rMax !== rMin) this.bumpRow(rMax);
 
-    // horizontal edges
-    for (let c = minC + 1; c < maxC; c++) {
-      this.putChar(minR, c, box.h, attrs);
-      this.putChar(maxR, c, box.h, attrs);
+    for (let r = rMin + 1; r < rMax; r++) {
+      if (cMin >= 0 && cMin < this.width) {
+        this.rows[r].cells[cMin] = makeCell();
+      }
+      if (cMax >= 0 && cMax < this.width) {
+        this.rows[r].cells[cMax] = makeCell();
+      }
+      this.bumpRow(r);
     }
 
-    // vertical edges
-    for (let r = minR + 1; r < maxR; r++) {
-      this.putChar(r, minC, box.v, attrs);
-      this.putChar(r, maxC, box.v, attrs);
-    }
+    this.decorations.push({
+      id: this.nextDecorationId++,
+      r1: rMin,
+      c1: cMin,
+      r2: rMax,
+      c2: cMax,
+      style,
+      fg: attrs?.fg ?? DEFAULT_FG,
+    });
+    this.decorationVersion++;
   }
 
   clear(attrs?: CellAttrs): void {
@@ -157,6 +181,13 @@ export class AsciiGridBuffer {
       }
       this.bumpRow(r);
     }
+    this.decorations = [];
+    this.decorationVersion++;
+  }
+
+  clearDecorations(): void {
+    this.decorations = [];
+    this.decorationVersion++;
   }
 
   // ── Reading ──────────────────────────────────────────────────────────────
@@ -188,11 +219,9 @@ export class AsciiGridBuffer {
 
     for (let r = 0; r < this.height; r++) {
       const row = this.rows[r];
-      // Structural sharing: if the version matches the previous snapshot, reuse the reference
       if (prev && prev[r] && prev[r].version === row.version) {
         snapshotRows[r] = prev[r];
       } else {
-        // Deep copy cells so the snapshot is immutable
         const cellsCopy: Cell[] = new Array(this.width);
         for (let c = 0; c < this.width; c++) {
           const src = row.cells[c];
@@ -204,6 +233,15 @@ export class AsciiGridBuffer {
 
     this.prevSnapshot = snapshotRows;
 
+    let snapshotDecorations: BoxDecoration[];
+    if (this.lastSnapshotDecorationVersion === this.decorationVersion && this.lastSnapshotDecorations) {
+      snapshotDecorations = this.lastSnapshotDecorations;
+    } else {
+      snapshotDecorations = [...this.decorations];
+      this.lastSnapshotDecorations = snapshotDecorations;
+      this.lastSnapshotDecorationVersion = this.decorationVersion;
+    }
+
     return {
       rows: snapshotRows,
       width: this.width,
@@ -212,6 +250,8 @@ export class AsciiGridBuffer {
       cursorCol: this.cursorCol,
       cursorVisible: this.cursorVisible,
       globalVersion: this.globalVersion,
+      decorations: snapshotDecorations,
+      decorationVersion: this.decorationVersion,
     };
   }
 

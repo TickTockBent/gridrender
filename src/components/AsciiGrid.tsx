@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import type { GridSnapshot, RowData, Cell } from '../lib/ascii-grid/AsciiGridBuffer';
+import type { GridSnapshot, RowData, Cell, BoxDecoration } from '../lib/ascii-grid/AsciiGridBuffer';
 
 // ─── Color Map ───────────────────────────────────────────────────────────────
 
@@ -74,20 +74,18 @@ function coalesceRow(cells: Cell[]): SpanRun[] {
 interface AsciiGridRowProps {
   rowData: RowData;
   colorMap: ColorMap;
+  isLast: boolean;
 }
 
-const AsciiGridRow = memo(function AsciiGridRow({ rowData, colorMap }: AsciiGridRowProps) {
+const AsciiGridRow = memo(function AsciiGridRow({ rowData, colorMap, isLast }: AsciiGridRowProps) {
   const runs = coalesceRow(rowData.cells);
-
   return (
-    <div style={{ height: '1lh', whiteSpace: 'pre', lineHeight: 1 }}>
+    <>
       {runs.map((run, i) => {
         const fgToken = run.inverse ? run.bg : run.fg;
         const bgToken = run.inverse ? run.fg : run.bg;
-
         const fgEntry = colorMap[fgToken];
         const bgEntry = colorMap[bgToken];
-
         const fgColor = fgEntry?.color ?? FALLBACK_FG;
         const bgColor = bgEntry?.color ?? bgEntry?.background ?? 'transparent';
 
@@ -99,9 +97,50 @@ const AsciiGridRow = memo(function AsciiGridRow({ rowData, colorMap }: AsciiGrid
 
         return <span key={i} style={style}>{run.text}</span>;
       })}
-    </div>
+      {!isLast && "\n"}
+    </>
   );
-}, (prev, next) => prev.rowData.version === next.rowData.version && prev.colorMap === next.colorMap);
+}, (prev, next) =>
+  prev.rowData.version === next.rowData.version &&
+  prev.colorMap === next.colorMap &&
+  prev.isLast === next.isLast
+);
+
+// ─── Box Overlay ─────────────────────────────────────────────────────────────
+
+interface BoxOverlayProps {
+  decorations: BoxDecoration[];
+  decorationVersion: number;
+  colorMap: ColorMap;
+}
+
+const BoxOverlay = memo(function BoxOverlay({ decorations, colorMap }: BoxOverlayProps) {
+  return (
+    <>
+      {decorations.map((dec) => {
+        const borderWidth = dec.style === 'double' ? '3px double' : '1px solid';
+        const colorEntry = colorMap[dec.fg];
+        const borderColor = colorEntry?.color ?? FALLBACK_FG;
+
+        return (
+          <div
+            key={dec.id}
+            style={{
+              position: 'absolute',
+              left: `${dec.c1}ch`,
+              top: `${dec.r1}lh`,
+              width: `${dec.c2 - dec.c1 + 1}ch`,
+              height: `${dec.r2 - dec.r1 + 1}lh`,
+              border: `${borderWidth} ${borderColor}`,
+              boxSizing: 'border-box',
+              pointerEvents: 'none',
+            }}
+          />
+        );
+      })}
+    </>
+  );
+}, (prev, next) => prev.decorationVersion === next.decorationVersion && prev.colorMap === next.colorMap);
 
 // ─── Grid Container ──────────────────────────────────────────────────────────
 
@@ -125,11 +164,21 @@ export function AsciiGrid({ snapshot, colorMap = wesOSColors }: AsciiGridProps) 
         fontSize: '14px',
       }}
     >
-      {snapshot.rows.map((rowData, r) => (
-        <AsciiGridRow key={r} rowData={rowData} colorMap={colorMap} />
-      ))}
-
-      {/* Cursor overlay */}
+      <pre style={{ whiteSpace: 'pre', lineHeight: 1, letterSpacing: 0, margin: 0 }}>
+        {snapshot.rows.map((rowData, r) => (
+          <AsciiGridRow
+            key={r}
+            rowData={rowData}
+            colorMap={colorMap}
+            isLast={r === snapshot.rows.length - 1}
+          />
+        ))}
+      </pre>
+      <BoxOverlay
+        decorations={snapshot.decorations}
+        decorationVersion={snapshot.decorationVersion}
+        colorMap={colorMap}
+      />
       {snapshot.cursorVisible && (
         <span
           className="ascii-cursor-blink"
