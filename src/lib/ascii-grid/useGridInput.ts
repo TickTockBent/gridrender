@@ -10,6 +10,7 @@ export interface GridKeyEvent {
   ctrl: boolean;
   alt: boolean;
   raw: string;
+  code: string;
 }
 
 export interface UseGridInputOptions {
@@ -47,6 +48,7 @@ function normalizeKey(e: KeyboardEvent): GridKeyEvent {
     ctrl: e.ctrlKey,
     alt: e.altKey,
     raw: e.key,
+    code: e.code,
   };
 }
 

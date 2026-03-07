@@ -1,6 +1,6 @@
 {
   "name": "@ticktockbent/gridrender",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "ASCII grid rendering system for React with buffer, snapshot diffing, and input handling",
   "type": "module",
   "main": "dist/index.js",
